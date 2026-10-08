@@ -1,0 +1,55 @@
+name: Build macOS desktop apps
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/macos-build.yml'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install FFmpeg
+        run: brew install ffmpeg
+      - name: Install app and optional vision
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e '.[dev,vision]'
+      - name: Dependency diagnostic
+        run: python -m autoclip_studio --doctor
+      - name: Unit and FFmpeg integration tests
+        run: python -m pytest -q
+      - name: Qt offscreen interface smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q tests/test_gui_smoke.py
+      - name: Create macOS app bundle
+        run: |
+          python -m venv .venv --system-site-packages
+          ./scripts/build_macos.sh
+      - name: Archive app bundle preserving macOS symlinks
+        run: ditto -c -k --sequesterRsrc --keepParent dist/AutoClipStudio.app AutoClipStudio-${{ matrix.arch }}.zip
+      - name: Upload unsigned macOS bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoClipStudio-macOS-${{ matrix.arch }}-unsigned
+          path: AutoClipStudio-${{ matrix.arch }}.zip
+          if-no-files-found: error
